@@ -143,29 +143,6 @@ class SUSIResultsGenerator(CategoryTagKeyGeneratorMixin, ResultsGenerator):
 
         return active
 
-    def deactivate_row_cells(self, request, row, cols):
-        coefficient = self.get_user_coefficient(row.user, request.round)
-
-        # Count only tasks your coefficient is eligible for, ignoring category Cifersky-cech
-        for key in row.cells_by_key:
-            if (
-                constants.SUSI_ELIGIBLE_FOR_TASK_BOUND[key] < coefficient
-                and self.tag.key != constants.SUSI_CIFERSKY_CECH
-                and request.round.number != constants.SUSI_OUTDOOR_ROUND_NUMBER
-            ):
-                row.cells_by_key[key].active = False
-
-        # Prepare list of pairs consisting of cell and its points.
-        tasks = [
-            (cell, self.get_cell_total(request, cell))
-            for key, cell in row.cells_by_key.items()
-            if row.cells_by_key[key].active
-        ]
-
-        # Count only the best 5 tasks
-        for cell, _ in sorted(tasks, key=lambda x: x[1])[:-5]:
-            cell.active = False
-
     def calculate_row_round_total(self, res_request, row, cols):
         row.round_total = sum(
             self.get_cell_total(res_request, cell)
@@ -185,7 +162,6 @@ class SUSIResultsGenerator(CategoryTagKeyGeneratorMixin, ResultsGenerator):
 
 
 class SUSIRules(CompetitionRules):
-
     RESULTS_TAGS = {
         constants.SUSI_CIFERSKY_CECH: ResultsTag(
             key=constants.SUSI_CIFERSKY_CECH, name=constants.SUSI_CIFERSKY_CECH
@@ -199,13 +175,22 @@ class SUSIRules(CompetitionRules):
     RESULTS_GENERATOR_CLASS = SUSIResultsGenerator
 
     def get_actual_result_rounds(self, competition):
-        rounds = Round.objects.filter(
+        active_rounds = Round.objects.filter(
             semester__competition=competition,
             visible=True,
+            second_end_time__gte=timezone.now(),
+        )
+        if len(active_rounds) > 0:
+            return active_rounds.order_by("number", "end_time")[:1]
+
+        finished_rounds = Round.objects.filter(
+            semester__competition=competition,
+            visible=True,
+            second_end_time__lte=timezone.now(),
             end_time__gte=timezone.now()
             - timezone.timedelta(days=MAX_DAYS_TO_SHOW_ROUND_IN_ACTUAL_RESULTS),
-        ).exclude(number=constants.SUSI_OUTDOOR_ROUND_NUMBER, end_time__gte=timezone.now())
-        return rounds.order_by("-end_time", "-number")[:1]
+        )
+        return finished_rounds.order_by("-end_time", "-number")[:1]
 
     def get_previous_round(self, round):
         previous_number = min(round.number - 1, 2)
